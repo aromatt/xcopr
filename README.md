@@ -2,92 +2,76 @@
 
 Split and merge Unix pipelines for filtering and data manipulation.
 
+## What is it?
+
+`sidechain` is little cousin of `xargs` and `awk` that fills a gap in the standard
+line-processing tool set, extending the reach of shell-based data processing just
+enough to make a difference for folks who still like to build load-bearing Unix
+pipelines.
+
 ## "Sidechain?"
 
-The name and concept are borrowed from an audio mixing technique in which an audio
-signal is processed using a device controlled by second audio signal.
+The name and concept are borrowed from an [audio mixing
+technique](https://www.sweetwater.com/insync/sidechaining-how-it-works-why-its-cool/)
+in which one audio signal is used to control a device applied to another audio
+signal.
 
-For example, you might run a bass guitar signal through a compressor that is
-triggered by a kick drum signal.
+For example, a compressor on a bass guitar might be controlled by a kick drum signal.
+In this setup, the bass ducks out of the way on every kick drum hit, making for a
+clearer, punchier mix.
 
-Similarly, in a Unix pipeline, we can use `sidechain` to control our critical path
-using a second command.
+The side and main signals need not be different instruments. The side signal may be a
+filtered copy of the main signal. For example, a simple technique for [de-essing
+vocals](https://en.wikipedia.org/wiki/De-essing#Side-chain_compression_or_broadband_de-essing)
+is to use a compressor triggered by a high-pass-filtered copy of the main vocal
+channel.
 
-## Filter Mode
-Filter mode allows you to use a line-mangling filter while preserving the original,
-unaltered input lines.
+## Details
+In a data pipeline, we can use `sidechain` to control our critical path using a side
+command or pipeline.
 
-### Example
-Imagine we have TSV data like this:
+While use cases of `sidechain` overlap with those of `xargs` or `awk`, `sidechain`
+has one key benefit: **it does not spawn a new process for every line of input**.
+
+### Basic Example
+Imagine we have lines of JSON-in-TSV:
 ```txt
-alice	{"foo":1,"bar":2}
-robert	{"bar":2,"foo":2}
+# input.tsv
+alice	{"foo":0,"bar":1}
+billy	{"foo":1,"bar":1}
+charlie	{"bar":0,"foo":1}
 ```
-We want to find all users who have `.foo != .bar`.
+We want to filter this data, producing a list of users having `.foo != .bar`.
 
-It's easy enough to do `cut -f2 | jq 'select(.foo != .bar)'`, but this is no good
-because `cut` removes the user names.
+It's easy to use `cut -f2 | jq 'select(.foo != .bar)'`, but then we'd lose the
+usernames.
 
-`sidechain` makes this easy:
+`sidechain` makes this easy. We can filter the data by using our `cut | jq` pipeline
+as the side command, leaving the original lines intact:
 
 ```bash
-$ cat input.tsv | sidechain filter 'cut -f2 | jq "select(.foo != .bar)"'
+$ cat input.tsv | sidechain filter -p true 'cut -f2 | jq ".foo != .bar"'
 
 # output
-alice	{"foo":1,"bar":2}
+alice	{"foo":0,"bar":1}
+charlie	{"bar":0,"foo":1}
 ```
+Arguments:
+* `'cut -f | jq ".foo != bar"'`: The side command. This happens to output `true` when
+  the condition is met.
+* `-p true`: Retain only those lines whose side outputs match the pattern `true`.
 
-The command `cut -f2 | jq "select(.foo != .bar)"` is used as a filter. `sidechain`
-emits the full, unmangled input lines which make it through the filter.
+Here, we're telling `sidechain` to start the side command, then pipe each input line
+to it and filter for the pattern `true`. Input lines that pass this test are emitted
+**in their original, unmangled form.**
 
-### A more realistic example
-You have millions of files with names like `20231101_1.2.3.0-24.csv.gz`. The
-`1.2.3.0-24` part represents an IP network (`1.2.3.0/24`). You have a list of
-networks of interest, which may be child or parent networks of those in the
-filenames. You want to produce a list of files whose CIDR overlaps with any in your
-interesting list.
-
-You have a tool called `filter-nets` that can efficiently filter a list of input
-networks given a set of query networks. But in order to use it, you'd need to remove
-the date prefixes and `.csv` suffixes, thereby mangling the filenames beyond repair.
-
-`sidechain filter` is designed for this exact situation:
-```bash
-ls /path/to/files/ | sidechain filter 'sed <extract network> | filter-nets'
-```
-
-### Filtering ambiguity and performance
-A typical filter introduces ambiguity: the number of output lines will be less than
-or equal to the number of input lines, and there is no foolproof way to match up
-input with output.
-
-By default, `sidechain` uses a dynamic batching technique to solve this problem,
-which requires invoking the filter command multiple times. This makes throughput
-highly dependent on the input data.
-
-To optimize performance, you can make your filter 1-to-1, meaning it will output
-exactly one line per input line.
-
-To use this optimization, you must tell `sidechain` about your commitment to make
-your filter 1-to-1 using `-t <char>`.
-
-Then, make sure your filter: (1) outputs exactly one line per input line and (2)
-outputs `<char>` to indicate that a line has passed the filter.
-
-`sidechain` will exclude from the final output all input lines for which the filter
-produces anything other than `<char>`.
-
-Here's the first example again, using `-t`:
-
-```bash
-cat input.tsv \
-  | sidechain filter -t X 'cut -f2 | jq "if .foo != .bar then X else Y end"' \
-  | cut -f1
-```
+Note: by default, when your input is provided via stdin, `sidechain` passes it on to
+the side command. You may not always want this; see the docs for how to control it
+explicitly.
 
 ## Map Mode
-In map mode, your side command generates values (one per line) which are inserted
-into lines of output.
+In map mode, your side command generates values which can be merged back into your
+main output.
 
 We can use `-I` (like `xargs`) to define a placeholder character for our generated
 values:
@@ -96,16 +80,13 @@ values:
 sidechain map -I% --side SIDE_CMD MAIN_CMD
 ```
 
-Note: unlike filter mode, map mode introduces no ambiguity, so `sidechain` invokes
-`SIDE_CMD` and `MAIN_CMD` exactly once each, processing all lines before exiting.
-
 ### Example: JSON clean-up
-Suppose you have a file containing lines of JSON with an `"ip"` field, but some of
-the "IPs" are actually URLs, and you want to clean up this data.
+Suppose you have a file containing lines of JSON with a `"url"` field, and you want
+to extract the host portion from each URL and add it as a field to each JSON record.
 
 ```json
-{"name":"alice","date":"2024-02-01","ip":"9.8.7.6"}
-{"name":"robert","date":"2024-01-01","ip":"http://1.2.3.4:8000/api"}
+{"name":"alice","date":"2024-02-01","url":"https://foo.com"}
+{"name":"robert","date":"2024-01-01","url":"http://1.2.3.4:8000/api"}
 ```
 
 It's not too difficult to extract the host from a URL. But how would you surgically
@@ -113,92 +94,51 @@ do it for a URL embedded in JSON?
 
 `sidechain map` makes this simple.
 
-For simplicity, let's imagine you're using a tool called `host-from-url` to extract
-the IPs from the URLs.
-
+For simplicity, let's imagine you have a tool called `host-from-url` to extract the
+hosts from the URLs. In reality, you could use this Ruby one-liner:
 ```bash
-cat input.json | sidechain map -I% --side 'jq .ip | host-from-url' jq '.ip = "%"'
+ruby -r uri -ne 'u = URI($_.chomp); puts(u.host || "")'
 ```
 
-Here, the side command, `jq .ip | host-from-url`, extracts the IPs.
+```bash
+cat input.json | sidechain map -I% --side 'jq .url | host-from-url' jq '.host = "%"'
+```
 
-`sidechain` then inserts these values at the `%` for each line of output from the
-main command, `jq '.ip = "%"'`.
+Here, the side command, `jq .url | host-from-url`, extracts and outputs the hosts.
 
-Note that the side and main commands are each invoked _only once_ in map mode.
-`sidechain` takes care of interpolating the output of the side command into the
-output of the main command.
+The main command is `jq '.host = "%"'`. The values generated by the side command are
+inserted back into the main command's output.
 
-### Using `$[]`
-For a cleaner, more-intuitive interpolation, you can use `$[]` to wrap your side
+Remember, the side and main commands are each **only invoked once**.
+
+## Using `$[]`
+For cleaner, more-intuitive interpolation, you can use `$[]` to wrap your side
 command:
 
 ```bash
-cat input.json | sidechain map jq '.ip = "$[jq .ip | host-from-url]"'
+cat input.json | sidechain map jq '.host = "$[jq .url | host-from-url]"'
 ```
 
-This has the same behavior as the `-I%` version; `$[]` is just another way to write
-it.
+This has the same behavior as the `-I%` version; it's just another way to spell it.
 
-### Mapping from a file
-If you have a file containing values to insert (as opposed to generating them on the
-fly using a side-command), you may specify it with `-f`:
+## Multiple Side Commands
+Continuing with the URL-parsing example, imagine you want to not only extract the
+host, but also the port:
 
 ```bash
-cat input.json | sidechain map -I% -f ips.txt jq '.ip = "%"'
+cat input.json | sidechain map jq '
+    .host = $[jq .url | host-from-url] |
+    .port = $[jq .url | port-from-url]
+  '
 ```
 
-Or, using `$[]`:
+This is great, but it has a little bit of needless duplicated work: `jq .url` is run
+twice in parallel.
+
+To prevent this, you can insert a preliminary side command that feeds into your
+downstream ones:
 ```bash
-cat input.json | sidechain map '.ip = "$[cat ips.txt]"'
+cat input.json | sidechain map \
+  --side 'jq .url' \
+  jq '.host = $[host-from-url] | .port = $[port-from-url]'
 ```
-
-## Flatmap Mode
-Flatmap mode is similar to map mode, but the side command can generate *multiple
-values* per input line.
-
-### Example
-Consider a TSV file with this format:
-```txt
-1.2.3.4	{"users":[{"name":"foo"},{"name":"bar"}]}
-```
-You want to flatten it into:
-```txt
-1.2.3.4	{"name":"foo"}
-1.2.3.4	{"name":"bar"}
-```
-We can use `sidechain flatmap`:
-
-```bash
-cat data.tsv | sidechain flatmap -I% \
-  'cut -f2 | jq -c .cases[]' \
-  awk '{print $1 "\t" "%"}'
-
-```
-Here, the side command `cut -f2 | jq -c ".users[]"` expands the `"users"` array into:
-
-```txt
-{"name":"foo"}
-{"name":"bar"}
-```
-Then `sidechain` generates a final output line for each of these values by inserting
-each value at the `%` in the main command, `awk '{print $1 "\t" "%"}'`.
-
-You can use `$[]` in flatmap mode too:
-```bash
-cat data.tsv | sidechain flatmap awk '{print $1 "\t" "$[cut -f2 | jq -c .cases[]]"}'
-```
-
-### Using `$N[]`
-For TSV data, you can use `$N[...]` as a shorthand for `$[cut -fN | ...]`:
-```bash
-cat data.tsv | sidechain flatmap '{print $1 "\t" "$2[jq -c .cases[]]}'
-```
-Note that `sidechain` replaces `$[]` and `$N[]` placeholders with other characters
-when invoking the commands to avoid syntax conflicts with programs like `awk`.
-
-### Flatmap n-to-m ambiguity
-Note: because of the ambuity problem, flatmap mode must invoke the side command
-separately for each input line.
-
-
