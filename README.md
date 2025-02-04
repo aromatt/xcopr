@@ -4,11 +4,11 @@ Split and merge Unix pipelines for filtering and data manipulation.
 
 ## What is it?
 
-`sidechain` is little cousin of `xargs` and `awk` that fills a gap in the standard
+`sidechain` is a younger cousin of `xargs` and `awk` that fills a gap in the standard
 line-processing tool set.
 
-It extends the reach of shell-based data processing just enough to make a 
-difference for folks who still like to build load-bearing Unix pipelines.
+It extends the reach of shell-based data processing just enough to make a difference
+for folks who still like to build load-bearing Unix pipelines.
 
 ### "Sidechain?"
 The name and concept are borrowed from an [audio mixing
@@ -28,15 +28,22 @@ is to use a compressor triggered by a high-pass-filtered copy of the main vocal
 channel.
 
 ### Sidechaining in Unix Pipelines
-![sidechain_filter](https://github.com/user-attachments/assets/f92bf88d-aeb4-452c-a097-c109a9077b61)
-
 In a data pipeline, we can use `sidechain` to control our critical path using a side
 command or pipeline.
+
+![sidechain_filter](https://github.com/user-attachments/assets/f92bf88d-aeb4-452c-a097-c109a9077b61)
 
 Use cases of `sidechain` overlap with those of `xargs` or `awk`, but `sidechain`
 has one key benefit: **it does not spawn a new process for every line of input**.
 
-### Basic Example
+## Filter Mode
+Sometimes, you can't build the filter you need without removing critical parts of
+your input.
+
+With `sidechain filter`, you get to keep your original data, even if you use a
+line-mangling filter.
+
+### Example
 Imagine we have lines of JSON-in-TSV:
 ```txt
 # input.tsv
@@ -44,13 +51,15 @@ alice	{"foo":0,"bar":1}
 billy	{"foo":1,"bar":1}
 charlie	{"bar":0,"foo":1}
 ```
-We want to filter this data to produce a list of users having `.foo != .bar`.
-We could use `cut -f2 | jq 'select(.foo != .bar)'`, but then we'd lose the
-usernames.
+We want to filter this data to produce a list of users who have `.foo != .bar`. We
+could use:
+```bash
+cut -f2 input.tsv | jq -c 'select(.foo != .bar)'
+```
+...but then we'd lose the usernames.
 
-`sidechain` makes this easy. We can filter the data by using our `cut | jq` pipeline
-as the side command, leaving the original lines intact:
-
+#### Solution with `sidechain`
+We can use our `cut | jq` as a side command, leaving the original lines intact:
 
 ```bash
 $ cat input.tsv | sidechain filter -p true 'cut -f2 | jq ".foo != .bar"'
@@ -58,29 +67,29 @@ $ cat input.tsv | sidechain filter -p true 'cut -f2 | jq ".foo != .bar"'
 ![sidechain_filter_annotated](https://github.com/user-attachments/assets/8222915b-ec35-4a54-85b4-f44f9453bcaf)
 
 Arguments:
-* `'cut -f2 | jq ".foo != bar"'`: The side command; this happens to output `true` when
-  the condition is met.
-* `-p true`: Retain only those lines whose side outputs match the pattern `true`.
+* `cut -f2 | jq ".foo != bar"`: The side command; this prints `true` when `.foo !=
+  .bar`.
+* `-p true`: Retain each line only if its side output matches the pattern `true`.
 
 Here, we're telling `sidechain` to start the side command, then pipe each line to
 it and filter for the pattern `true`. Input lines that pass this test are emitted
 **in their original, unmangled form.**
 
 Important notes:
-* The side command is spawned only once; it's a long-running subprocess that handles
-  all input lines.
-* When your input is provided via stdin, `sidechain` passes it on to the side command
-  by default. You may not always want this; see the docs for how to control it
-  explicitly.
+* The side command is **spawned only once**. It's a long-running subprocess that
+  handles all input lines.
+* When you provide your input over stdin, `sidechain` passes it on to the side
+  command by default. You may not always want this; see the docs for how to control
+  it explicitly.
 
 ## Map Mode
 In map mode, your side command generates values which can be merged back into your
 main pipeline.
 
-### Example: Data Enrichment
+### Example
 Suppose you have a file containing lines of JSON with a `"url"` field, and you want
-to extract the host component from each URL and add it as a field to each JSON
-record.
+to extract the host component from each record's URL and add it as a new `"host"`
+field.
 
 ```json
 {"name":"alice","url":"https://foo.com"}
@@ -119,8 +128,11 @@ cat input.json | sidechain map jq '.host = "$[jq .url | host-from-url]"'
 This has the same behavior as the `-I%` version; it's just another way to spell it.
 
 ## Multiple Side Commands
-Continuing with the URL-parsing example, imagine you want to not only extract the
-host, but also the port:
+Map mode supports the use of _multiple side commands_.
+
+Continuing with the URL-parsing example, imagine you want to extract the port from
+the URL as well. Again, we'll use a placeholder (`port-from-url`) instead of real
+command that extracts ports from URLs.
 
 ```bash
 cat input.json | sidechain map jq '
@@ -130,10 +142,9 @@ cat input.json | sidechain map jq '
 ```
 ![sidechain_map_multiple](https://github.com/user-attachments/assets/a9707eb7-ee05-4c86-8c15-c427369729c1)
 
-This is great, but it has a little bit of needless duplicated work: `jq .url` is run
-twice in parallel.
+This is great, but it duplicates some work: we're running two copies of `jq .url`.
 
-To prevent this, you can insert a preliminary side command that feeds into your
+To prevent this, you can insert a preliminary side command that feeds into the
 downstream ones:
 ```bash
 cat input.json | sidechain map \
