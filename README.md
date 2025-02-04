@@ -136,13 +136,15 @@ cat input.json | sidechain map jq '.host = "$[jq .url | host-from-url]"'
                                   ^---------- main command ------------^
 ```
 
+<img src="./images/sidechain_map_example_interp.svg" width="75%">
+
 This has the same behavior as the `-I%` version; it's just another way to spell it.
 
 ## Multiple Side Commands
 Map mode supports the use of _multiple side commands_.
 
 Continuing with the URL-parsing example, imagine you want to extract the port from
-the URL as well. Again, we'll use a placeholder (`port-from-url`) instead of real
+the URL as well. Again, we'll use a placeholder (`port-from-url`) instead of a real
 command that extracts ports from URLs.
 
 ```
@@ -152,7 +154,7 @@ cat input.json | sidechain map jq '
   '
 ```
 
-<img src="./images/sidechain_map_multiple.svg" width="75%">
+<img src="./images/sidechain_map_multiple.svg">
 
 This is great, but it duplicates some work: we're running two copies of `jq .url`.
 
@@ -164,4 +166,4 @@ cat input.json | sidechain map \
   jq '.host = $[host-from-url] | .port = $[port-from-url]'
 ```
 
-<img src="./images/sidechain_map_multiple_prelim.svg" width="75%">
+<img src="./images/sidechain_map_multiple_prelim.svg">
