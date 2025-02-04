@@ -5,9 +5,10 @@ Split and merge Unix pipelines for filtering and data manipulation.
 ## What is it?
 
 `sidechain` is little cousin of `xargs` and `awk` that fills a gap in the standard
-line-processing tool set, extending the reach of shell-based data processing just
-enough to make a difference for folks who still like to build load-bearing Unix
-pipelines.
+line-processing tool set.
+
+It extends the reach of shell-based data processing just enough to make a 
+difference for folks who still like to build load-bearing Unix pipelines.
 
 ### "Sidechain?"
 The name and concept are borrowed from an [audio mixing
