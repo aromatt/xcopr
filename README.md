@@ -53,7 +53,7 @@ charlie	{"bar":0,"foo":1}
 ```
 We want to filter this data to produce a list of users who have `.foo != .bar`. We
 could use:
-```bash
+```
 cut -f2 input.tsv | jq -c 'select(.foo != .bar)'
 ```
 ...but then we'd lose the usernames.
@@ -61,8 +61,10 @@ cut -f2 input.tsv | jq -c 'select(.foo != .bar)'
 #### Solution with `sidechain`
 We can use our `cut | jq` as a side command, leaving the original lines intact:
 
-```bash
+```
 $ cat input.tsv | sidechain filter -p true 'cut -f2 | jq ".foo != .bar"'
+
+                                           ^------- side command ------^
 ```
 
 <img src="./images/sidechain_filter_annotated.svg">
@@ -110,8 +112,10 @@ hosts from the URLs. In reality, you could use the Ruby one-liner
 We can use `-I` (like `xargs`) to define a placeholder character for our generated
 values:
 
-```bash
+```
 cat input.json | sidechain map -I% --side 'jq .url | host-from-url' jq '.host = "%"'
+
+                                          ^----- side command ----^ ^-- main cmd --^
 ```
 
 <img src="./images/sidechain_map_example.svg" width="75%">
@@ -125,8 +129,11 @@ Remember, the side and main commands are each **spawned only once**.
 For cleaner, more-intuitive interpolation, you can use `$[]` to wrap your side
 command:
 
-```bash
+```
 cat input.json | sidechain map jq '.host = "$[jq .url | host-from-url]"'
+
+                                            ^----- side command -----^
+                                  ^---------- main command ------------^
 ```
 
 This has the same behavior as the `-I%` version; it's just another way to spell it.
@@ -138,7 +145,7 @@ Continuing with the URL-parsing example, imagine you want to extract the port fr
 the URL as well. Again, we'll use a placeholder (`port-from-url`) instead of real
 command that extracts ports from URLs.
 
-```bash
+```
 cat input.json | sidechain map jq '
     .host = $[jq .url | host-from-url] |
     .port = $[jq .url | port-from-url]
@@ -151,7 +158,7 @@ This is great, but it duplicates some work: we're running two copies of `jq .url
 
 To prevent this, you can insert a preliminary side command that feeds into the
 downstream ones:
-```bash
+```
 cat input.json | sidechain map \
   --side 'jq .url' \
   jq '.host = $[host-from-url] | .port = $[port-from-url]'
