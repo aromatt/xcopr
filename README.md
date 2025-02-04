@@ -2,7 +2,7 @@
 
 Split and merge Unix pipelines for filtering and data manipulation.
 
-<img src="./images/sidechain_small.svg" width="400">
+<img src="./images/sidechain_small.svg" width="25%">
 
 ## What is it?
 
@@ -16,8 +16,6 @@ for folks who still like to build load-bearing Unix pipelines.
 The name and concept are borrowed from an [audio mixing
 technique](https://www.sweetwater.com/insync/sidechaining-how-it-works-why-its-cool/)
 in which an audio effect is controlled by a secondary audio signal.
-
-![sidechain_audio](https://github.com/user-attachments/assets/e2892f11-163d-43b7-b289-855b3e57caf8)
 
 For example, a compressor on a bass guitar might be controlled by a kick drum signal.
 In this setup, the bass ducks out of the way on every kick drum hit, making for a
@@ -33,7 +31,7 @@ channel.
 In a data pipeline, we can use `sidechain` to control our critical path using a side
 command or pipeline.
 
-<img src="./images/sidechain_filter.svg" width="400">
+<img src="./images/sidechain_filter.svg" width="75%">
 
 Use cases of `sidechain` overlap with those of `xargs` or `awk`, but `sidechain`
 has one key benefit: **it does not spawn a new process for every line of input**.
@@ -67,7 +65,7 @@ We can use our `cut | jq` as a side command, leaving the original lines intact:
 $ cat input.tsv | sidechain filter -p true 'cut -f2 | jq ".foo != .bar"'
 ```
 
-<img src="./images/sidechain_filter_annotated.svg" width="400">
+<img src="./images/sidechain_filter_annotated.svg">
 
 Arguments:
 * `cut -f2 | jq ".foo != bar"`: The side command; this prints `true` when `.foo !=
@@ -89,7 +87,7 @@ Important notes:
 In map mode, your side command generates values which can be merged back into your
 main pipeline.
 
-<img src="./images/sidechain_map.svg" width="400">
+<img src="./images/sidechain_map.svg" width="75%">
 
 ### Example
 Suppose you have a file containing lines of JSON with a `"url"` field, and you want
@@ -116,7 +114,7 @@ values:
 cat input.json | sidechain map -I% --side 'jq .url | host-from-url' jq '.host = "%"'
 ```
 
-<img src="./images/sidechain_map_example.svg" width="400">
+<img src="./images/sidechain_map_example.svg" width="75%">
 
 Here, the side command, `jq .url | host-from-url`, extracts the hosts, which are
 then inserted back into the output of the main command, `jq '.host = "%"'`.
@@ -147,7 +145,7 @@ cat input.json | sidechain map jq '
   '
 ```
 
-<img src="./images/sidechain_map_multiple.svg" width="400">
+<img src="./images/sidechain_map_multiple.svg" width="75%">
 
 This is great, but it duplicates some work: we're running two copies of `jq .url`.
 
@@ -159,4 +157,4 @@ cat input.json | sidechain map \
   jq '.host = $[host-from-url] | .port = $[port-from-url]'
 ```
 
-<img src="./images/sidechain_map_multiple_prelim.svg" width="400">
+<img src="./images/sidechain_map_multiple_prelim.svg" width="75%">
