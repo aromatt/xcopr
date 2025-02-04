@@ -140,7 +140,7 @@ cat input.json | sidechain map jq '
     .port = $[jq .url | port-from-url]
   '
 ```
-![sidechain_map_multiple](https://github.com/user-attachments/assets/a9707eb7-ee05-4c86-8c15-c427369729c1)
+![sidechain_map_multiple](https://github.com/user-attachments/assets/ce90085d-6245-479c-bbe2-019f3a6aa5a1)
 
 This is great, but it duplicates some work: we're running two copies of `jq .url`.
 
@@ -151,5 +151,5 @@ cat input.json | sidechain map \
   --side 'jq .url' \
   jq '.host = $[host-from-url] | .port = $[port-from-url]'
 ```
-![sidechain_map_multiple_prelim](https://github.com/user-attachments/assets/91ec8f22-b350-4d7b-9b7e-077657ccb4ab)
+![sidechain_map_multiple_prelim](https://github.com/user-attachments/assets/25040335-68c2-4ef4-a320-60f0ae9e654a)
 
