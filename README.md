@@ -33,7 +33,7 @@ channel.
 In a data pipeline, we can use `sidechain` to control our critical path using a side
 command or pipeline.
 
-sidechain_filter
+<img src="./images/sidechain_filter.svg" width="400">
 
 Use cases of `sidechain` overlap with those of `xargs` or `awk`, but `sidechain`
 has one key benefit: **it does not spawn a new process for every line of input**.
@@ -67,7 +67,7 @@ We can use our `cut | jq` as a side command, leaving the original lines intact:
 $ cat input.tsv | sidechain filter -p true 'cut -f2 | jq ".foo != .bar"'
 ```
 
-sidechain_filter_annotated
+<img src="./images/sidechain_filter_annotated.svg" width="400">
 
 Arguments:
 * `cut -f2 | jq ".foo != bar"`: The side command; this prints `true` when `.foo !=
@@ -89,6 +89,7 @@ Important notes:
 In map mode, your side command generates values which can be merged back into your
 main pipeline.
 
+<img src="./images/sidechain_map.svg" width="400">
 
 ### Example
 Suppose you have a file containing lines of JSON with a `"url"` field, and you want
@@ -115,7 +116,7 @@ values:
 cat input.json | sidechain map -I% --side 'jq .url | host-from-url' jq '.host = "%"'
 ```
 
-sidechain_map_example
+<img src="./images/sidechain_map_example.svg" width="400">
 
 Here, the side command, `jq .url | host-from-url`, extracts the hosts, which are
 then inserted back into the output of the main command, `jq '.host = "%"'`.
@@ -146,7 +147,7 @@ cat input.json | sidechain map jq '
   '
 ```
 
-sidechain_map_multiple
+<img src="./images/sidechain_map_multiple.svg" width="400">
 
 This is great, but it duplicates some work: we're running two copies of `jq .url`.
 
@@ -158,4 +159,4 @@ cat input.json | sidechain map \
   jq '.host = $[host-from-url] | .port = $[port-from-url]'
 ```
 
-![sidechain_map_multiple_prelim](https://github.com/user-attachments/assets/837c806e-97b6-463b-8dae-01ed8731daf1)
+<img src="./images/sidechain_map_multiple_prelim.svg" width="400">
