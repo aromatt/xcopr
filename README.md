@@ -27,6 +27,9 @@ vocals](https://en.wikipedia.org/wiki/De-essing#Side-chain_compression_or_broadb
 is to use a compressor triggered by a high-pass-filtered copy of the main vocal
 channel.
 
+### Sidechaining in Unix Pipelines
+![sidechain_filter](https://github.com/user-attachments/assets/f92bf88d-aeb4-452c-a097-c109a9077b61)
+
 In a data pipeline, we can use `sidechain` to control our critical path using a side
 command or pipeline.
 
@@ -52,8 +55,7 @@ as the side command, leaving the original lines intact:
 ```bash
 $ cat input.tsv | sidechain filter -p true 'cut -f2 | jq ".foo != .bar"'
 ```
-
-![sidechain_filter](https://github.com/user-attachments/assets/42c211b0-f426-40c5-ba51-13ad80512fed)
+![sidechain_filter_annotated](https://github.com/user-attachments/assets/8222915b-ec35-4a54-85b4-f44f9453bcaf)
 
 Arguments:
 * `'cut -f2 | jq ".foo != bar"'`: The side command; this happens to output `true` when
