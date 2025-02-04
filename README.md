@@ -2,7 +2,7 @@
 
 Split and merge Unix pipelines for filtering and data manipulation.
 
-sidechain_small
+<img src="./images/sidechain_small.svg" width="400">
 
 ## What is it?
 
