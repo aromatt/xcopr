@@ -1,12 +1,15 @@
+> [!NOTE]
+> This README is a sketch. The tool has not been implemented yet.
+
 # xcopr
 <img src="./images/xcopr_small.svg" width="25%">
 
 `xcopr` adds ergonomic **coprocessing** to the classic Unix toolkit.
 
 Like `xargs`, it plays a supporting role, allowing users to compose familiar tools
-more easily. But unlike `xargs`, `xcopr` is designed for stream processing. It enables
-users to **split and rejoin pipelines**, which increases the reach of pipeline-based
-programming.
+more easily. But unlike `xargs`, `xcopr` is designed for stream processing. It
+extends the reach of pipeline-based shell programming by enabling users to **split
+and rejoin pipelines**.
 
 ## What is a coprocess?
 A coprocess runs in parallel with a main process and communicates bidirectionally
@@ -17,14 +20,15 @@ to use them that way.
 [Bash](https://www.gnu.org/software/bash/manual/html_node/Coprocesses.html),
 [ksh](https://www.ibm.com/docs/en/aix/7.1?topic=shell-coprocess-facility), and
 [gawk](https://www.gnu.org/software/gawk/manual/html_node/Two_002dway-I_002fO.html)
-have coprocessing features, but they are too verbose to serve as pipeline building
-blocks in practice.
+have coprocessing features, and the technique can be achieved using any
+general-purpose programming language. But all of these methods are too verbose to
+serve as pipeline building blocks in practice.
 
 ## Use Cases
 `xcopr` can help in these situations:
 - Your data contains a mixture of encodings (e.g., base64 in TSV).
 - You want to use a line-mangling filter (like `cut` or `jq`) but need to preserve
-  the original lines for subsequent steps in the pipeline.
+  the original lines for a later step in your pipeline.
 - You want to use bulk database queries to enrich large, line-based datasets.
 - You're using `xargs` or `awk` to run subprocesses, but don’t want to fork a new
   process per line.
@@ -40,11 +44,13 @@ Both `xargs` and `xcopr` help users compose other utilities more easily by passi
 stdin to child processes.
 
 But the similarities end there:
-* `xargs` groups its stdin into batches of arguments for its child processes;
-  `xcopr` pipes its stdin to its coprocesses.
+* `xargs` groups its stdin into batches which are distributed them to
+  fired-and-forgotten child processes; `xcopr` pipes its stdin to coordinated
+  coprocesses whose outputs can be reintegrated into the pipeline.
 * `xargs` invokes the specified utility several times (one for each batch of
   arguments); `xcopr`'s coprocesses are long-lived.
-* `xargs` does not preserve stdin for further downstream processing; `xcopr` does.
+* `xargs` does not support preservation of stdin for downstream processing; `xcopr`
+  does.
 * `xargs` does not support multiple coordinated subprocesses; `xcopr` does.
 </details>
 
@@ -55,7 +61,7 @@ But the similarities end there:
 Both `sed` and `xcopr` are used for line-based stream processing, and fit naturally
 into pipelines.
 
-However, while `sed`'s behavior is controlled by a bespoke scripting language,
+However, while `sed`'s behavior is controlled by a dedicated scripting language,
 `xcopr` uses coprocesses. Also, `sed` does not preserve original lines or support
 multiple parallel processing streams, while `xcopr` does.
 </details>
@@ -67,7 +73,7 @@ multiple parallel processing streams, while `xcopr` does.
 `awk` is a powerful programming language, and its GNU variant [supports
 coprocessing](https://www.gnu.org/software/gawk/manual/html_node/Two_002dway-I_002fO.html)
 just like any general-purpose language (you can achieve what `xcopr` does in a Python
-script).
+script, too).
 
 By contrast, `xcopr` is not a programming language at all. It is a small command-line
 utility designed for composition with other tools.
@@ -101,14 +107,15 @@ However, they differ greatly in their intended use cases and features:
   while `xcopr` is designed for stream processing.
 * `expect` scripts manage control flow and simulate user input; `xcopr` focuses on
   piping data through coprocesses in a pipeline.
-* `expect` runs standalone scripts; `xcopr` is used inline as part of a shell pipeline.
+* `expect` runs standalone scripts; `xcopr` is meant to be used inline as part of a
+  shell pipeline.
 </details>
 
 
 # Usage
 ## Filter Mode
-In filter mode, the user specifies a coprocess whose output will determine whether
-each stdin line passes through.
+In filter mode, the user specifies a coprocess whose output determines whether each
+stdin line passes through.
 
 <img src="./images/xcopr_filter.svg" width="75%">
 
@@ -162,21 +169,21 @@ Arguments:
 * `-c COPROC`: a coprocess, stated as a shell command, which generates a stream of
   lines. By default, each coprocess created this way receives a copy of `xcopr`'s
   stdin.
-* `-p STRING`: a print-string which generates a stream of lines, potentially
-  referencing other coprocesses or print-strings. This is a convenient shorthand for
-  a coprocess like `awk {print ...}`.
+* `-p STRING`: a "printer" which generates a stream of lines, potentially referencing
+  other coprocesses or printers. This is a convenient stand-in for a coprocess like
+  `awk {print ...}`.
 * `COMMAND`: the command which generates the final output of `xcopr`. If omitted, the
-  final output is that of the last-specified coprocess or print-string.
+  final output is that of the last-specified coprocess or printer.
 
-Each coprocess (`-c`) and print-string (`-p`) generates a stream (a sequence of
-lines). These streams may be referenced by the main command (or by other coprocesses
-and print-strings) using a simple substitution mechanism, described in greater detail below.
+Each coprocess (`-c`) and printer (`-p`) generates a stream (a sequence of lines).
+These streams may be referenced by the main command (or by other coprocesses and
+printers) using a simple substitution mechanism, described in greater detail below.
 
 ### Referencing Streams
 Each stream may be referenced by its position in the `xcopr` command using `%1`,
 `%2`, and so on. `%0` is the original stdin of `xcopr` itself.
 
-These references are called "stream variables," and they are conceptual similar to
+These references are called "stream variables," and they are conceptually similar to
 `\1` in `sed` or `$1` in `awk`: in the output of `xcopr`, a stream variable takes on
 a different value for each line processed.
 
@@ -198,8 +205,8 @@ $ xcopr map \
 Note: both `jq` commands, and `rev`, are long-lived, parallel processes that handle
 all lines before exiting.
 
-### In-Place Coprocesses
-A `%{cmd}` appearing anywhere in a coprocess command or print-string creates a new
+### Coprocess Substitution
+A `%{cmd}` appearing anywhere in a coprocess command or printer creates a new
 coprocess and refers to it in-place. This coprocess receives a copy of `xcopr`'s
 stdin. This is equivalent to creating a stream using `-c` or `-p` and referring to it
 with `%N`.
@@ -208,7 +215,7 @@ Similarly, `%N{cmd}` creates an in-place coprocess that receives stream `N` as i
 stdin (so, `%0{cmd}` behaves exactly the same as `%{cmd}`).
 
 #### Example: Bulk Redis Queries
-Imagine we store birthdays by user ID in Redis.
+Imagine we store user birthdays in Redis, keyed by user ID.
 
 We want to enrich the following data by adding each user's birthday:
 ```txt
@@ -216,11 +223,12 @@ We want to enrich the following data by adding each user's birthday:
 {"name":"alice","id":1}
 {"name":"billy","id":2}
 
-# output
+# output (using data from Redis)
 {"name":"alice","id":1,"birthday":"1975-05-10"}
 {"name":"billy","id":2,"birthday":"2010-06-20"}
 ```
-We can perform the Redis lookups in bulk using a coprocess:
+The Redis CLI client can be used as a coprocess by piping queries to it. We can
+perform the Redis lookups in bulk using a coprocess:
 ```bash
 $ xcopr map \
     -p 'GET id:%{jq .id}' \
@@ -246,7 +254,7 @@ its associated IP:
 {"domain":"foo.com"}
 {"domain":"bar.com"}
 
-# output
+# output (using data from SQLite)
 {"domain":"foo.com","ip":"1.1.1.1"}
 {"domain":"bar.com","ip":"2.2.2.2"}
 ```
