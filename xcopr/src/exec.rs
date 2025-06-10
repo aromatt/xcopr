@@ -127,6 +127,128 @@ async fn execute_main_command_with_input(command: &str, input: &str) -> Result<(
     Ok(())
 }
 
+pub async fn execute_template_only(
+    tokenized_template: &str,
+    stream_defs: &[StreamDef],
+) -> Result<(), ExecError> {
+    // Read stdin line by line
+    let stdin = tokio::io::stdin();
+    let reader = BufReader::new(stdin);
+    let mut lines = reader.lines();
+    
+    while let Ok(Some(input_line)) = lines.next_line().await {
+        // Build token substitution map
+        let mut token_values: HashMap<String, String> = HashMap::new();
+        
+        // Process each command with the appropriate input
+        for stream_def in stream_defs {
+            let output = match &stream_def.input_source {
+                Some(crate::parser::InputSource::Stdin) | None => {
+                    // Commands that read from stdin (or direct references which shouldn't happen in template-only mode)
+                    process_line_through_command(&input_line, &stream_def.template).await?
+                },
+                Some(crate::parser::InputSource::Stream(_)) => {
+                    // This shouldn't happen in template-only mode since there are no coprocesses
+                    return Err(ExecError::TokenSubstitutionFailed(format!(
+                        "Stream reference in template-only mode: {}", stream_def.token
+                    )));
+                }
+            };
+            token_values.insert(stream_def.token.clone(), output);
+        }
+        
+        // Substitute tokens in the tokenized template
+        let final_output = substitute_tokens(tokenized_template, &token_values);
+        
+        // Print the result to stdout
+        println!("{}", final_output);
+    }
+    
+    Ok(())
+}
+
+pub async fn execute_map_multiple(
+    coprocesses: &[String],
+    tokenized_template: &str,
+    stream_defs: &[StreamDef],
+) -> Result<(), ExecError> {
+    // Read stdin line by line
+    let stdin = tokio::io::stdin();
+    let reader = BufReader::new(stdin);
+    let mut lines = reader.lines();
+    
+    while let Ok(Some(input_line)) = lines.next_line().await {
+        // Build token substitution map
+        let mut token_values: HashMap<String, String> = HashMap::new();
+        
+        // First, run all coprocesses and collect their outputs
+        let mut stream_outputs: Vec<String> = Vec::new();
+        for coprocess_cmd in coprocesses {
+            let output = process_line_through_command(&input_line, coprocess_cmd).await?;
+            stream_outputs.push(output);
+        }
+        
+        // Process each stream definition
+        for stream_def in stream_defs {
+            let output = match &stream_def.input_source {
+                None => {
+                    // Direct reference to a stream (like %1, %2)
+                    if stream_def.template.starts_with("stream_") {
+                        if let Some(num_str) = stream_def.template.strip_prefix("stream_") {
+                            if let Ok(stream_num) = num_str.parse::<usize>() {
+                                if stream_num > 0 && stream_num <= stream_outputs.len() {
+                                    stream_outputs[stream_num - 1].clone()
+                                } else {
+                                    return Err(ExecError::TokenSubstitutionFailed(format!(
+                                        "Stream {} not found", stream_num
+                                    )));
+                                }
+                            } else {
+                                return Err(ExecError::TokenSubstitutionFailed(format!(
+                                    "Invalid stream number: {}", num_str
+                                )));
+                            }
+                        } else {
+                            return Err(ExecError::TokenSubstitutionFailed(format!(
+                                "Invalid stream template: {}", stream_def.template
+                            )));
+                        }
+                    } else {
+                        return Err(ExecError::TokenSubstitutionFailed(format!(
+                            "Unknown template: {}", stream_def.template
+                        )));
+                    }
+                },
+                Some(crate::parser::InputSource::Stdin) => {
+                    // Command that reads from stdin (like %{cut -f2})
+                    process_line_through_command(&input_line, &stream_def.template).await?
+                },
+                Some(crate::parser::InputSource::Stream(stream_num)) => {
+                    // Command that reads from a specific stream (like %1{jq .foo})
+                    if *stream_num > 0 && *stream_num <= stream_outputs.len() {
+                        let input_data = &stream_outputs[*stream_num - 1];
+                        process_line_through_command(input_data, &stream_def.template).await?
+                    } else {
+                        return Err(ExecError::TokenSubstitutionFailed(format!(
+                            "Stream {} not found for chained command", stream_num
+                        )));
+                    }
+                }
+            };
+            
+            token_values.insert(stream_def.token.clone(), output);
+        }
+        
+        // Substitute tokens in the tokenized template
+        let final_output = substitute_tokens(tokenized_template, &token_values);
+        
+        // Print the result to stdout
+        println!("{}", final_output);
+    }
+    
+    Ok(())
+}
+
 pub async fn execute_map_simple(
     coprocess_cmd: &str,
     tokenized_template: &str,
@@ -144,20 +266,38 @@ pub async fn execute_map_simple(
         // Build token substitution map
         let mut token_values: HashMap<String, String> = HashMap::new();
         
-        // Map tokens to coprocess output
+        // Map tokens to their computed values
         for stream_def in stream_defs {
-            if stream_def.template == "stream_1" {
-                // %1 maps to the first coprocess output
-                token_values.insert(stream_def.token.clone(), coprocess_output.clone());
-            } else if stream_def.template.starts_with("stream_") {
-                // For now, other numbered streams also map to the first coprocess
-                // TODO: Implement multiple coprocesses
-                token_values.insert(stream_def.token.clone(), coprocess_output.clone());
-            } else {
-                // This is an inline command like "jq .foo" that should process the coprocess output
-                let chained_output = process_line_through_command(&coprocess_output, &stream_def.template).await?;
-                token_values.insert(stream_def.token.clone(), chained_output);
-            }
+            let output = match &stream_def.input_source {
+                None => {
+                    // Direct reference to a stream (like %1, %2, %)
+                    if stream_def.template == "stream_1" || stream_def.template == "default_stream" {
+                        // For simple mode, map to the coprocess output
+                        coprocess_output.clone()
+                    } else {
+                        // For other numbered streams, map to coprocess output for now
+                        // TODO: Implement multiple coprocesses properly
+                        coprocess_output.clone()
+                    }
+                },
+                Some(crate::parser::InputSource::Stdin) => {
+                    // Command that reads from stdin (like %{cut -f2})
+                    process_line_through_command(&input_line, &stream_def.template).await?
+                },
+                Some(crate::parser::InputSource::Stream(stream_num)) => {
+                    // Command that reads from a specific stream (like %1{jq .foo})
+                    let input_data = if *stream_num == 1 {
+                        &coprocess_output
+                    } else {
+                        // For now, all numbered streams map to the first coprocess
+                        // TODO: Implement multiple coprocesses properly
+                        &coprocess_output
+                    };
+                    process_line_through_command(input_data, &stream_def.template).await?
+                }
+            };
+            
+            token_values.insert(stream_def.token.clone(), output);
         }
         
         // Substitute tokens in the tokenized template

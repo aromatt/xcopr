@@ -144,6 +144,7 @@ mod tests {
                 id: 1,
                 template: "echo hello".to_string(),
                 token: "__XCOPR_001__".to_string(),
+                input_source: None,
             }
         ];
         let main_cmd = "cat __XCOPR_001__";
@@ -159,16 +160,19 @@ mod tests {
                 id: 1,
                 template: "echo hello".to_string(),
                 token: "__XCOPR_001__".to_string(),
+                input_source: None,
             },
             StreamDef {
                 id: 2,
                 template: "process __XCOPR_001__".to_string(),
                 token: "__XCOPR_002__".to_string(),
+                input_source: None,
             },
             StreamDef {
                 id: 3,
                 template: "transform __XCOPR_001__".to_string(),
                 token: "__XCOPR_003__".to_string(),
+                input_source: None,
             }
         ];
         let main_cmd = "combine __XCOPR_002__ __XCOPR_003__";
@@ -191,11 +195,13 @@ mod tests {
                 id: 1,
                 template: "process __XCOPR_002__".to_string(),
                 token: "__XCOPR_001__".to_string(),
+                input_source: None,
             },
             StreamDef {
                 id: 2,
                 template: "process __XCOPR_001__".to_string(),
                 token: "__XCOPR_002__".to_string(),
+                input_source: None,
             }
         ];
         let main_cmd = "output result";

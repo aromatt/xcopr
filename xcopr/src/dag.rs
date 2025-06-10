@@ -100,6 +100,7 @@ mod tests {
             id,
             template: template.to_string(),
             token: token.to_string(),
+            input_source: None, // Default for tests - direct references
         }
     }
 

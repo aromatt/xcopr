@@ -1,10 +1,17 @@
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum InputSource {
+    Stdin,        // %{cmd} reads from original stdin
+    Stream(usize), // %N{cmd} reads from stream N output
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct StreamDef {
     pub id: usize,
     pub template: String,
     pub token: String,
+    pub input_source: Option<InputSource>, // None for %N (direct reference), Some for %{cmd}/%N{cmd}
 }
 
 pub fn parse_tokens(template: &str) -> Vec<StreamDef> {
@@ -39,6 +46,7 @@ pub fn parse_tokens_with_template(template: &str) -> (String, Vec<StreamDef>) {
                             id: id_counter,
                             template: cmd,
                             token: token.clone(),
+                            input_source: Some(InputSource::Stdin), // %{cmd} reads from stdin
                         });
                         id_counter += 1;
                     }
@@ -68,10 +76,12 @@ pub fn parse_tokens_with_template(template: &str) -> (String, Vec<StreamDef>) {
                             let token = format!("__XCOPR_{:03}__", id_counter);
                             seen_patterns.insert(pattern.clone(), token.clone());
                             
+                            let stream_num: usize = num_str.parse().unwrap_or(1);
                             stream_defs.push(StreamDef {
                                 id: id_counter,
                                 template: cmd,
                                 token: token.clone(),
+                                input_source: Some(InputSource::Stream(stream_num)), // %N{cmd} reads from stream N
                             });
                             id_counter += 1;
                         }
@@ -94,6 +104,7 @@ pub fn parse_tokens_with_template(template: &str) -> (String, Vec<StreamDef>) {
                             id: id_counter,
                             template: format!("stream_{}", num_str),
                             token: token.clone(),
+                            input_source: None, // %N is a direct reference to stream N output
                         });
                         id_counter += 1;
                     }
@@ -114,6 +125,7 @@ pub fn parse_tokens_with_template(template: &str) -> (String, Vec<StreamDef>) {
                         id: id_counter,
                         template: "default_stream".to_string(),
                         token: token.clone(),
+                        input_source: None, // bare % is a direct reference to default stream output
                     });
                     id_counter += 1;
                 }
