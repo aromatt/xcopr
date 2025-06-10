@@ -9,6 +9,8 @@ edition = "2021"
 
 [dependencies]
 clap.workspace = true
+petgraph = "0.7"
+thiserror = "1"
 
 [dev-dependencies]
 pretty_assertions.workspace = true
