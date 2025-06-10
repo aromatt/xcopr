@@ -2,6 +2,7 @@ use clap::Subcommand;
 
 pub mod parser;
 pub mod dag;
+pub mod exec;
 
 #[derive(Debug, Clone)]
 pub struct Config {

@@ -9,7 +9,8 @@ struct Cli {
     command: XcoprSubcommand,
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     
     let config = match &cli.command {
@@ -30,5 +31,8 @@ fn main() {
         },
     };
     
+    // For now, just debug the config - actual execution will be implemented next
     dbg!(config);
+    
+    Ok(())
 }

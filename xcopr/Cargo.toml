@@ -11,6 +11,7 @@ edition = "2021"
 clap.workspace = true
 petgraph = "0.7"
 thiserror = "1"
+tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
 pretty_assertions.workspace = true
