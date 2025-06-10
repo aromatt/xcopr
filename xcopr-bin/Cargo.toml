@@ -1,0 +1,19 @@
+[package]
+name = "xcopr-bin"
+authors = ["Andrew Matteson <andrewkmatteson@gmail.com>"]
+version = "0.1.0"
+description = "A command-line tool for splitting and merging pipelines using coprocesses"
+homepage = "https://github.com/aromatt/xcopr"
+repository = "https://github.com/aromatt/xcopr"
+edition = "2021"
+
+[[bin]]
+name = "xcopr"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+xcopr = { path = "../xcopr" }
+
+[dev-dependencies]
+pretty_assertions.workspace = true

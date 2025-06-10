@@ -1,19 +1,9 @@
-[package]
-name = "xcopr"
-authors = ["Andrew Matteson <andrewkmatteson@gmail.com>"]
-version = "0.1.0"
-description = "A command-line tool for splitting and merging pipelines using coprocesses"
-homepage = "https://github.com/aromatt/xcopr"
-repository = "https://github.com/aromatt/xcopr"
-edition = "2021"
+[workspace]
+members = ["xcopr-bin", "xcopr"]
+resolver = "2"
 
-
-[dependencies]
+[workspace.dependencies]
 clap = { version = "4", features = ["derive", "wrap_help"] }
-shell-escape = "0.1"
-tempfile = "3"
-
-[profile.release]
-lto = true
-codegen-units = 1
-strip = true
+pretty_assertions = "1"
+# shell-escape = "0.1"  # Pinned for potential future use
+# tempfile = "3"  # May be useful for testing or temp file handling

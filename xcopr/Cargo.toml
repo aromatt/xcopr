@@ -1,0 +1,14 @@
+[package]
+name = "xcopr"
+authors = ["Andrew Matteson <andrewkmatteson@gmail.com>"]
+version = "0.1.0"
+description = "Core library for xcopr coprocessing functionality"
+homepage = "https://github.com/aromatt/xcopr"
+repository = "https://github.com/aromatt/xcopr"
+edition = "2021"
+
+[dependencies]
+clap.workspace = true
+
+[dev-dependencies]
+pretty_assertions.workspace = true
