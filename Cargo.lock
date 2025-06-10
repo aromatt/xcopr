@@ -596,7 +596,9 @@ name = "xcopr-bin"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "petgraph",
  "pretty_assertions",
+ "thiserror",
  "tokio",
  "xcopr",
 ]
