@@ -4,7 +4,7 @@ use petgraph::graph::NodeIndex;
 use std::collections::HashMap;
 use std::process::Stdio;
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::process::{Child, Command};
 use tokio::sync::mpsc;
 
@@ -20,11 +20,6 @@ pub enum ExecError {
     DagExecutionFailed(String),
 }
 
-struct ProcessHandle {
-    child: Child,
-    output_receiver: mpsc::Receiver<String>,
-}
-
 pub async fn execute_dag(
     dag: &Dag,
     stream_defs: &[StreamDef],
@@ -36,129 +31,92 @@ pub async fn execute_dag(
         token_to_stream.insert(stream.token.clone(), stream);
     }
     
-    // Build a map from node indices to their output channels
-    let mut node_outputs: HashMap<NodeIndex, mpsc::Receiver<String>> = HashMap::new();
-    let mut process_handles: Vec<tokio::task::JoinHandle<Result<(), ExecError>>> = Vec::new();
+    // For a simple implementation, let's handle the basic case:
+    // 1. Read from stdin
+    // 2. Process through coprocesses 
+    // 3. Substitute tokens in main command
+    // 4. Execute main command with substituted values
     
-    // Execute nodes in topological order
-    for &node_idx in &dag.execution_order {
-        let node = dag.get_node(node_idx).ok_or_else(|| {
-            ExecError::DagExecutionFailed("Invalid node index in execution order".to_string())
-        })?;
+    // Read stdin line by line
+    let stdin = tokio::io::stdin();
+    let reader = BufReader::new(stdin);
+    let mut lines = reader.lines();
+    
+    while let Ok(Some(input_line)) = lines.next_line().await {
+        // For each input line, process it through all coprocesses
+        let mut token_values: HashMap<String, String> = HashMap::new();
         
-        match node {
-            DagNode::Stream(stream_def) => {
-                // Get input from dependencies
-                let dependencies = dag.get_dependencies(node_idx);
-                let mut substituted_template = stream_def.template.clone();
-                
-                // Substitute tokens with actual values from dependency outputs
-                for dep_idx in dependencies {
-                    if let Some(dep_node) = dag.get_node(dep_idx) {
-                        if let DagNode::Stream(dep_stream) = dep_node {
-                            // For now, we'll use a placeholder approach
-                            // In a real implementation, we'd need to coordinate the token substitution
-                            // with the actual process outputs
-                            substituted_template = substituted_template.replace(
-                                &dep_stream.token,
-                                &format!("{{output_from_{}}}", dep_stream.id),
-                            );
-                        }
+        // Process each stream in execution order
+        for &node_idx in &dag.execution_order {
+            if let Some(node) = dag.get_node(node_idx) {
+                match node {
+                    DagNode::Stream(stream_def) => {
+                        // Process this line through the coprocess
+                        let output = process_line_through_command(&input_line, &stream_def.template).await?;
+                        token_values.insert(stream_def.token.clone(), output);
+                    }
+                    DagNode::Main(_) => {
+                        // Handle main command after all streams are processed
+                        break;
                     }
                 }
-                
-                // Spawn the process
-                let (output_sender, output_receiver) = mpsc::channel::<String>(100);
-                node_outputs.insert(node_idx, output_receiver);
-                
-                let template_clone = substituted_template.clone();
-                let handle = tokio::spawn(async move {
-                    spawn_and_capture_process(&template_clone, output_sender).await
-                });
-                
-                process_handles.push(handle);
-            }
-            DagNode::Main(main_cmd) => {
-                // For the main command, substitute tokens and execute
-                let mut substituted_main = main_cmd.clone();
-                
-                for stream in stream_defs {
-                    if substituted_main.contains(&stream.token) {
-                        // For now, use placeholder substitution
-                        substituted_main = substituted_main.replace(
-                            &stream.token,
-                            &format!("{{output_from_{}}}", stream.id),
-                        );
-                    }
-                }
-                
-                // Execute main command and output to stdout
-                let handle = tokio::spawn(async move {
-                    execute_main_command(&substituted_main).await
-                });
-                
-                process_handles.push(handle);
             }
         }
-    }
-    
-    // Wait for all processes to complete
-    for handle in process_handles {
-        handle.await.map_err(|e| {
-            ExecError::DagExecutionFailed(format!("Process execution failed: {}", e))
-        })??;
+        
+        // Now substitute tokens in main command and execute
+        let substituted_main = substitute_tokens(main_template, &token_values);
+        execute_main_command_with_input(&substituted_main, &input_line).await?;
     }
     
     Ok(())
 }
 
-async fn spawn_and_capture_process(
-    template: &str,
-    output_sender: mpsc::Sender<String>,
-) -> Result<(), ExecError> {
+async fn process_line_through_command(input: &str, command: &str) -> Result<String, ExecError> {
     let mut child = Command::new("/bin/sh")
         .arg("-c")
-        .arg(template)
+        .arg(command)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
     
-    let stdout = child.stdout.take().ok_or_else(|| {
-        ExecError::DagExecutionFailed("Failed to capture stdout".to_string())
-    })?;
+    // Write input to the process
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input.as_bytes()).await?;
+        stdin.write_all(b"\n").await?;
+        stdin.shutdown().await?;
+    }
     
-    let stderr = child.stderr.take().ok_or_else(|| {
-        ExecError::DagExecutionFailed("Failed to capture stderr".to_string())
-    })?;
+    // Read output
+    let output = child.wait_with_output().await?;
     
-    // Handle stdout
-    let output_sender_clone = output_sender.clone();
-    let stdout_handle = tokio::spawn(async move {
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-        
-        while let Ok(Some(line)) = lines.next_line().await {
-            if output_sender_clone.send(line).await.is_err() {
-                break; // Receiver dropped
-            }
-        }
-    });
+    if !output.status.success() {
+        return Err(ExecError::ProcessFailed(
+            output.status.code().unwrap_or(-1),
+        ));
+    }
     
-    // Handle stderr (forward to parent stderr)
-    let stderr_handle = tokio::spawn(async move {
-        let reader = BufReader::new(stderr);
-        let mut lines = reader.lines();
-        
-        while let Ok(Some(line)) = lines.next_line().await {
-            eprintln!("{}", line);
-        }
-    });
+    // Return stdout as string, trimmed
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+async fn execute_main_command_with_input(command: &str, input: &str) -> Result<(), ExecError> {
+    let mut child = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(command)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()?;
     
-    // Wait for process to complete
+    // Write input to the process
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(input.as_bytes()).await?;
+        stdin.write_all(b"\n").await?;
+        stdin.shutdown().await?;
+    }
+    
     let exit_status = child.wait().await?;
-    
-    // Wait for output handlers to complete
-    let _ = tokio::join!(stdout_handle, stderr_handle);
     
     if !exit_status.success() {
         return Err(ExecError::ProcessFailed(
@@ -169,23 +127,55 @@ async fn spawn_and_capture_process(
     Ok(())
 }
 
-async fn execute_main_command(template: &str) -> Result<(), ExecError> {
-    let mut child = Command::new("/bin/sh")
-        .arg("-c")
-        .arg(template)
-        .stdout(Stdio::inherit()) // Output directly to parent stdout
-        .stderr(Stdio::inherit()) // Output directly to parent stderr
-        .spawn()?;
+pub async fn execute_map_simple(
+    coprocess_cmd: &str,
+    tokenized_template: &str,
+    stream_defs: &[StreamDef],
+) -> Result<(), ExecError> {
+    // Read stdin line by line
+    let stdin = tokio::io::stdin();
+    let reader = BufReader::new(stdin);
+    let mut lines = reader.lines();
     
-    let exit_status = child.wait().await?;
-    
-    if !exit_status.success() {
-        return Err(ExecError::ProcessFailed(
-            exit_status.code().unwrap_or(-1),
-        ));
+    while let Ok(Some(input_line)) = lines.next_line().await {
+        // Process the line through the coprocess
+        let coprocess_output = process_line_through_command(&input_line, coprocess_cmd).await?;
+        
+        // Build token substitution map
+        let mut token_values: HashMap<String, String> = HashMap::new();
+        
+        // Map tokens to coprocess output
+        for stream_def in stream_defs {
+            if stream_def.template == "stream_1" {
+                // %1 maps to the first coprocess output
+                token_values.insert(stream_def.token.clone(), coprocess_output.clone());
+            } else if stream_def.template.starts_with("stream_") {
+                // For now, other numbered streams also map to the first coprocess
+                // TODO: Implement multiple coprocesses
+                token_values.insert(stream_def.token.clone(), coprocess_output.clone());
+            } else {
+                // This is an inline command like "jq .foo" that should process the coprocess output
+                let chained_output = process_line_through_command(&coprocess_output, &stream_def.template).await?;
+                token_values.insert(stream_def.token.clone(), chained_output);
+            }
+        }
+        
+        // Substitute tokens in the tokenized template
+        let final_output = substitute_tokens(tokenized_template, &token_values);
+        
+        // Print the result to stdout
+        println!("{}", final_output);
     }
     
     Ok(())
+}
+
+fn substitute_tokens(template: &str, values: &HashMap<String, String>) -> String {
+    let mut result = template.to_string();
+    for (token, value) in values {
+        result = result.replace(token, value);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -210,26 +200,43 @@ mod tests {
     }
     
     #[tokio::test]
-    async fn test_process_spawning() {
-        let (sender, mut receiver) = mpsc::channel(10);
-        
-        let handle = tokio::spawn(async move {
-            spawn_and_capture_process("echo 'test output'", sender).await
-        });
-        
-        let result = handle.await.unwrap();
+    async fn test_process_line_through_command() {
+        let result = process_line_through_command("hello", "tr a-z A-Z").await;
         assert!(result.is_ok());
-        
-        // Should receive the output
-        if let Some(output) = receiver.recv().await {
-            assert_eq!(output, "test output");
-        }
+        assert_eq!(result.unwrap(), "HELLO");
     }
     
     #[tokio::test]
     async fn test_main_command_execution() {
         // Test that main command execution works
-        let result = execute_main_command("echo 'main command test' > /dev/null").await;
+        let result = execute_main_command_with_input("cat > /dev/null", "test input").await;
         assert!(result.is_ok());
+    }
+    
+    #[test]
+    fn test_substitute_tokens() {
+        let mut values = HashMap::new();
+        values.insert("__XCOPR_001__".to_string(), "FOO".to_string());
+        values.insert("__XCOPR_002__".to_string(), "BAR".to_string());
+        
+        // Test single token substitution
+        let result = substitute_tokens("echo __XCOPR_001__", &values);
+        assert_eq!(result, "echo FOO");
+        
+        // Test multiple tokens
+        let result = substitute_tokens("echo __XCOPR_001__ __XCOPR_002__", &values);
+        assert_eq!(result, "echo FOO BAR");
+        
+        // Test repeated tokens
+        let result = substitute_tokens("echo __XCOPR_001__ and __XCOPR_001__ again", &values);
+        assert_eq!(result, "echo FOO and FOO again");
+        
+        // Test no tokens
+        let result = substitute_tokens("echo hello", &values);
+        assert_eq!(result, "echo hello");
+        
+        // Test missing token (should remain unchanged)
+        let result = substitute_tokens("echo __XCOPR_999__", &values);
+        assert_eq!(result, "echo __XCOPR_999__");
     }
 }

@@ -8,6 +8,11 @@ pub struct StreamDef {
 }
 
 pub fn parse_tokens(template: &str) -> Vec<StreamDef> {
+    let (_, stream_defs) = parse_tokens_with_template(template);
+    stream_defs
+}
+
+pub fn parse_tokens_with_template(template: &str) -> (String, Vec<StreamDef>) {
     let mut stream_defs = Vec::new();
     let mut processed_template = template.to_string();
     let mut id_counter = 1;
@@ -122,7 +127,7 @@ pub fn parse_tokens(template: &str) -> Vec<StreamDef> {
         }
     }
     
-    stream_defs
+    (processed_template, stream_defs)
 }
 
 fn find_closing_brace(chars: &[char], start: usize) -> Option<usize> {

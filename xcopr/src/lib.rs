@@ -14,21 +14,21 @@ pub struct Config {
 #[derive(Debug, Clone, Subcommand)]
 pub enum XcoprSubcommand {
     Filter {
-        #[arg(short = 'c', long = "coprocess")]
-        coprocess: String,
-        #[arg(short = 's', long = "stream")]
-        stream: String,
+        #[arg(short = 'c', long = "coprocess", action = clap::ArgAction::Append)]
+        coprocesses: Vec<String>,
+        #[arg(short = 's', long = "stream", action = clap::ArgAction::Append)]
+        streams: Vec<String>,
     },
     Map {
-        #[arg(short = 'c', long = "coprocess")]
-        coprocess: String,
-        #[arg(short = 's', long = "stream")]
-        stream: String,
+        #[arg(short = 'c', long = "coprocess", action = clap::ArgAction::Append)]
+        coprocesses: Vec<String>,
+        #[arg(short = 's', long = "stream", action = clap::ArgAction::Append)]
+        streams: Vec<String>,
     },
     Diagram {
-        #[arg(short = 'c', long = "coprocess")]
-        coprocess: String,
-        #[arg(short = 's', long = "stream")]
-        stream: String,
+        #[arg(short = 'c', long = "coprocess", action = clap::ArgAction::Append)]
+        coprocesses: Vec<String>,
+        #[arg(short = 's', long = "stream", action = clap::ArgAction::Append)]
+        streams: Vec<String>,
     },
 }
