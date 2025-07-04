@@ -1,6 +1,6 @@
 [package]
 name = "xcopr"
-authors = ["Andrew Matteson <andrewkmatteson@gmail.com>"]
+authors = ["Andrew Matteson <andrew.k.matteson@gmail.com>"]
 version = "0.1.0"
 description = "A command-line tool for splitting and merging pipelines using coprocesses"
 homepage = "https://github.com/aromatt/xcopr"
@@ -10,8 +10,11 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4", features = ["derive", "wrap_help"] }
+#clap = "2"
 shell-escape = "0.1"
 tempfile = "3"
+regex = "1"
+atty = "0.2"
 
 [profile.release]
 lto = true
