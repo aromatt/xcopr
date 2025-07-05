@@ -6,20 +6,20 @@ use clap::Parser;
 
 #[derive(Debug)]
 pub enum XcoprError {
-    SubprocessSpawnFailed {
+    SubprocSpawnFailed {
         command: String,
         source: io::Error,
     },
-    SubprocessWaitFailed {
+    SubprocWaitFailed {
         command: String,
         source: io::Error,
     },
 
-    SubprocessExitError {
+    SubprocExitError {
         command: String,
         status: std::process::ExitStatus,
     },
-    SubprocessStdoutNotCaptured(String),
+    SubprocStdoutNotCaptured(String),
     MissingArgs(&'static str),
 }
 
@@ -27,17 +27,17 @@ impl fmt::Display for XcoprError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use XcoprError::*;
         match self {
-            SubprocessSpawnFailed { command, source } => {
+            SubprocSpawnFailed { command, source } => {
                 write!(f, "failed to start subprocess `{}`: {}", command, source)
             }
-            SubprocessWaitFailed { command, source } => {
+            SubprocWaitFailed { command, source } => {
                 write!(f, "failed to start subprocess `{}`: {}", command, source)
             }
-            SubprocessExitError { command, status } => {
+            SubprocExitError { command, status } => {
                 write!(f, "subprocess `{}` failed with exit status {}", command, status)
             }
             MissingArgs(arg) => write!(f, "missing required argument: {}", arg),
-            SubprocessStdoutNotCaptured(cmd) => write!(f, "stdout not captured for `{}`", cmd),
+            SubprocStdoutNotCaptured(cmd) => write!(f, "stdout not captured for `{}`", cmd),
         }
     }
 }
@@ -60,49 +60,49 @@ fn run(args: Args) -> Result<(), XcoprError> {
     let mut children = Vec::new();
     let mut next_stdin: Stdio = Stdio::inherit();
 
-    for (i, cmd_str) in args.coproc.iter().enumerate() {
+    for cmd_str in &args.coproc[..args.coproc.len().saturating_sub(1)] {
         let mut cmd = std::process::Command::new("sh");
         cmd.arg("-eu").arg("-c").arg(cmd_str);
-
         cmd.stdin(next_stdin);
 
-        let is_last = i == args.coproc.len() - 1;
-
-        if is_last {
-            cmd.stdout(Stdio::inherit());
-        } else {
-            cmd.stdout(Stdio::piped());
-        }
-
+        cmd.stdout(Stdio::piped());
         let mut child = cmd.spawn().map_err(|e|
-            XcoprError::SubprocessSpawnFailed {
+            XcoprError::SubprocSpawnFailed {
                 command: cmd_str.clone(),
                 source: e,
             }
         )?;
-
-        // For all but the last child, stdout must be
-        next_stdin = if is_last {
-            Stdio::null()
-        } else {
-            match child.stdout.take() {
-                Some(stdout) => Stdio::from(stdout),
-                None => {
-                    return Err(XcoprError::SubprocessStdoutNotCaptured(cmd_str.clone()));
-                }
+        next_stdin = match child.stdout.take() {
+            Some(stdout) => Stdio::from(stdout),
+            None => {
+                return Err(XcoprError::SubprocStdoutNotCaptured(cmd_str.clone()));
             }
         };
-
         children.push((cmd_str, child));
     }
 
+    // Handle last command, which inherits stdout from xcopr
+    let cmd_str = &args.coproc[args.coproc.len()-1];
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg("-eu").arg("-c").arg(cmd_str);
+    cmd.stdin(next_stdin);
+    cmd.stdout(Stdio::inherit());
+    let child = cmd.spawn().map_err(|e|
+        XcoprError::SubprocSpawnFailed {
+            command: cmd_str.clone(),
+            source: e,
+        }
+    )?;
+    children.push((cmd_str, child));
+
+    // Wait for all children to exit
     for (cmd_str, mut child) in children {
-        let status = child.wait().map_err(|e| XcoprError::SubprocessWaitFailed {
+        let status = child.wait().map_err(|e| XcoprError::SubprocWaitFailed {
             command: cmd_str.clone(),
             source: e,
         })?;
         if !status.success() {
-            return Err(XcoprError::SubprocessExitError {
+            return Err(XcoprError::SubprocExitError {
                 command: cmd_str.clone(),
                 status,
             })
