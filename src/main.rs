@@ -1,9 +1,11 @@
 use std::process;
 use std::env;
-use std::process::Child;
-use std::process::Stdio;
+use std::process::{Child, Command, Stdio};
 use std::fmt;
-use std::io;
+use std::io::{self, BufRead, Write};
+use std::collections::HashMap;
+use std::thread;
+
 use clap::Parser;
 
 #[derive(Debug)]
@@ -22,7 +24,9 @@ pub enum XcoprError {
     },
     StdoutNotCaptured(String),
     MissingArgs(&'static str),
+    MissingStreamTemplate, // TODO
     BadShell(String),
+    InvalidStreamRef(String),
 }
 
 impl fmt::Display for XcoprError {
@@ -39,8 +43,13 @@ impl fmt::Display for XcoprError {
                 write!(f, "subprocess `{}` failed with exit status {}", command, status)
             }
             MissingArgs(arg) => write!(f, "missing required argument: {}", arg),
+            // TODO
+            MissingStreamTemplate => write!(f, "missing stream template"),
             StdoutNotCaptured(cmd) => write!(f, "stdout not captured for `{}`", cmd),
             BadShell(cmd) => write!(f, "bad shell: `{}`", cmd),
+            InvalidStreamRef(num_str) => {
+                write!(f, "invalid stream reference: `{}`", num_str)
+            }
         }
     }
 }
@@ -58,6 +67,7 @@ struct Args {
     stream: Vec<String>,
 }
 
+/// The shell and initial arguments that will be used to execute the coprocesses.
 #[derive(Debug)]
 struct Shell {
     program: String,
@@ -84,22 +94,98 @@ impl Shell {
             .map(|s| Shell::from_str(&s))?
     }
 
-    fn full_cmd_str(&self, cmd: &str) -> String {
-        format!("{} {} '{}'", self.program, self.args.join(" "), cmd)
-    }
-
+    /// Executes cmd_str using this shell, connecting the provided stdin and stdout.
     fn spawn(&self, cmd_str: &str, stdin: Stdio, stdout: Stdio) -> Result<Child, XcoprError> {
-        std::process::Command::new(&self.program)
+        Command::new(&self.program)
             .args(&self.args)
             .arg(cmd_str)
             .stdin(stdin)
             .stdout(stdout)
             .spawn()
             .map_err(|e| XcoprError::SpawnFailed {
-                command: self.full_cmd_str(cmd_str),
+                command: format!("{} {} '{}'", self.program, self.args.join(" "), cmd_str),
                 source: e,
             })
     }
+}
+
+enum Segment {
+    Literal(String),
+    StreamRef(usize),
+}
+
+// TODO: support embedded coprocesses
+fn parse_template(tmpl: &str) -> Result<Vec<Segment>, XcoprError> {
+    let mut segments = Vec::new();
+    let mut chars = tmpl.chars().peekable();
+    let mut cur_lit = String::new();
+
+    while let Some(ch) = chars.next() {
+        if ch == '%' {
+            // Flush any literal accumulated so far
+            if !cur_lit.is_empty() {
+                segments.push(Segment::Literal(std::mem::take(&mut cur_lit)));
+            }
+            // Parse the number after %. Peek and collect each char until we reach a non-digit
+            let mut num_str = String::new();
+            while let Some(&c) = chars.peek() {
+                if c.is_ascii_digit() {
+                    num_str.push(c);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            let idx = num_str.parse::<usize>().map_err(|_| {
+                XcoprError::InvalidStreamRef(num_str)
+            })?;
+            segments.push(Segment::StreamRef(idx));
+        } else {
+            cur_lit.push(ch);
+        }
+    }
+
+    if !cur_lit.is_empty() {
+        segments.push(Segment::Literal(cur_lit));
+    }
+
+    Ok(segments)
+}
+
+/// Generates a sequence of strings that can reference (and be referenced by) other streams.
+struct StreamTemplate {
+    template: String,
+    segments: Vec<Segment>,
+}
+
+impl StreamTemplate {
+    fn parse(template: &str) -> Result<StreamTemplate, XcoprError> {
+        let segments = parse_template(template)
+            .map_err(|e| {
+                eprintln!("xcopr: error parsing stream template `{}`: {}", template, e);
+                e
+            })?;
+        Ok(StreamTemplate {
+            template: template.to_string(),
+            segments,
+        })
+    }
+
+    /// Renders the template for a line given a cross-section of values from referenced streams.
+    // TODO: I don't think we need to return a string here. We should just write
+    //       all the segments directly to this template's output stream or stdout.
+    //
+    fn render(&self, streams: &[&str]) -> String {
+        let mut out = String::with_capacity(64);
+        for seg in &self.segments {
+            match seg {
+                Segment::Literal(s) => out.push_str(&s),
+                Segment::StreamRef(i) => out.push_str(streams[*i]),
+            }
+        }
+        out
+    }
+
 }
 
 fn run(args: Args) -> Result<(), XcoprError> {
@@ -107,8 +193,19 @@ fn run(args: Args) -> Result<(), XcoprError> {
     let mut next_stdin: Stdio = Stdio::inherit();
     let shell = Shell::from_env("XCOPR_SHELL", "sh -euc")?;
 
-    // Handle all but the last command
-    for cmd_str in &args.coproc[..args.coproc.len().saturating_sub(1)] {
+    // TODO: for now, assume there's exactly one stream template and it's the final stream
+    if args.stream.len() != 1 {
+        return Err(XcoprError::MissingStreamTemplate)
+    }
+    let stream_template = StreamTemplate::parse(&args.stream[0]);
+
+    // This holds references to the output streams of the coprocesses. These are the streams that
+    // can be referenced by index (e.g. %1, %2, etc) in the stream template. %0 is the original
+    // stdin.
+    let mut cmd_streams = Vec::new();
+
+    // Set up all coprocesses
+    for cmd_str in &args.coproc {
         let mut child = shell.spawn(cmd_str, next_stdin, Stdio::piped())?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
@@ -119,11 +216,23 @@ fn run(args: Args) -> Result<(), XcoprError> {
         children.push((cmd_str, child));
     }
 
-    // Handle last command, which inherits stdout from xcopr
-    if let Some(cmd_str) = args.coproc.last() {
-        let child = shell.spawn(cmd_str, next_stdin, Stdio::inherit())?;
-        children.push((cmd_str, child));
-    }
+    //// Set up all but the last command.
+    //for cmd_str in &args.coproc[..args.coproc.len().saturating_sub(1)] {
+    //    let mut child = shell.spawn(cmd_str, next_stdin, Stdio::piped())?;
+
+    //    let stdout = child.stdout.take().ok_or_else(|| {
+    //        XcoprError::StdoutNotCaptured(cmd_str.to_string())
+    //    })?;
+
+    //    next_stdin = Stdio::from(stdout);
+    //    children.push((cmd_str, child));
+    //}
+
+    //// Set up last command, which inherits stdout from xcopr
+    //if let Some(cmd_str) = args.coproc.last() {
+    //    let child = shell.spawn(cmd_str, next_stdin, Stdio::inherit())?;
+    //    children.push((cmd_str, child));
+    //}
 
     // Wait for all procs to exit
     for (cmd_str, mut child) in children {
